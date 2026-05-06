@@ -1,36 +1,25 @@
-import { PermissionAction } from '@supabase/shared-types/out/constants'
-import { AlertCircle, ChevronDown, Copy, Download, LoaderCircle, Trash2, X } from 'lucide-react'
+import { useParams } from 'common'
+import { AlertCircle, LoaderCircle, X } from 'lucide-react'
 import SVG from 'react-inlinesvg'
-import {
-  Button,
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from 'ui'
+import { Button } from 'ui'
 
-import { URL_EXPIRY_DURATION } from '../Storage.constants'
-import { StorageItem } from '../Storage.types'
-import { getPathAlongOpenedFolders } from './StorageExplorer.utils'
-import { useCopyUrl } from './useCopyUrl'
-import { useFetchFileUrlQuery } from './useFetchFileUrlQuery'
-import { ButtonTooltip } from '@/components/ui/ButtonTooltip'
-import { useAsyncCheckPermissions } from '@/hooks/misc/useCheckPermissions'
+import { StorageItemWithColumn } from '../Storage.types'
+import { useFetchFileUrlQuery } from '../StorageExplorer/useFetchFileUrlQuery'
+import { useBucketFilePickerStateSnapshot } from './BucketFilePickerState'
 import { BASE_PATH } from '@/lib/constants'
 import { formatBytes } from '@/lib/helpers'
-import { useStorageExplorerStateSnapshot } from '@/state/storage-explorer'
 
 const PREVIEW_SIZE_LIMIT = 10 * 1024 * 1024 // 10MB
 
-const PreviewFile = ({ item }: { item: StorageItem }) => {
-  const { projectRef, selectedBucket, openedFolders } = useStorageExplorerStateSnapshot()
-  const folderPath = getPathAlongOpenedFolders({ openedFolders, selectedBucket }, false)
-  const path = [folderPath, item.name].filter(Boolean).join('/')
+const PreviewFile = ({ item }: { item: StorageItemWithColumn }) => {
+  const { ref: projectRef } = useParams()
+  const { bucket, columns } = useBucketFilePickerStateSnapshot()
+  const path = columns.slice(0, item.columnIndex).concat(item.name).join('/')
 
   const { data: previewUrl, isPending: isLoading } = useFetchFileUrlQuery({
     path,
-    projectRef: projectRef,
-    bucket: selectedBucket,
+    projectRef: projectRef!,
+    bucket,
   })
 
   // if the size is not available, we set it to be greater than the max size
@@ -114,50 +103,58 @@ const PreviewFile = ({ item }: { item: StorageItem }) => {
   )
 }
 
-export const PreviewPane = () => {
+export const PreviewPane = ({ onSelect }: { onSelect: (url: string) => void }) => {
+  const { ref: projectRef } = useParams()
   const {
-    selectedBucket,
     selectedFilePreview: file,
-    setSelectedItemsToDelete,
     setSelectedFilePreview,
-    setSelectedFileCustomExpiry,
-    downloadFile,
-  } = useStorageExplorerStateSnapshot()
-  const { onCopyUrl } = useCopyUrl()
+    bucket,
+    columns,
+  } = useBucketFilePickerStateSnapshot()
 
-  const { can: canUpdateFiles } = useAsyncCheckPermissions(PermissionAction.STORAGE_WRITE, '*')
+  const path = file ? columns.slice(0, file.columnIndex).concat(file.name).join('/') : ''
+  const { data: previewUrl, isLoading } = useFetchFileUrlQuery(
+    { path, projectRef: projectRef!, bucket },
+    { enabled: !!file }
+  )
 
   if (!file) return null
 
-  const width = 450
   const size = file.metadata ? formatBytes(file.metadata.size) : null
   const mimeType = file.metadata ? file.metadata.mimetype : undefined
   const createdAt = file.created_at ? new Date(file.created_at).toLocaleString() : 'Unknown'
   const updatedAt = file.updated_at ? new Date(file.updated_at).toLocaleString() : 'Unknown'
 
   return (
-    <div
-      className="h-full border-l border-overlay bg-surface-100 p-4 overflow-y-auto"
-      style={{ width }}
-    >
+    <div className="h-full border-l border-overlay bg-surface-100 overflow-y-auto w-[450px] pb-4">
       {/* Preview Header */}
-      <div className="flex w-full justify-end text-foreground-lighter transition-colors hover:text-foreground">
-        <X
-          className="cursor-pointer"
-          size={14}
-          strokeWidth={2}
-          onClick={() => setSelectedFilePreview(undefined)}
-        />
+      <div className="flex w-full justify-end items-center gap-2 sticky top-0 bg-surface-100 p-4 border-b">
+        <Button
+          size="tiny"
+          onClick={() => onSelect(previewUrl!)}
+          disabled={!previewUrl}
+          loading={isLoading}
+        >
+          Select
+        </Button>
+        <div className="text-foreground-lighter transition-colors hover:text-foreground">
+          <X
+            className="cursor-pointer"
+            size={14}
+            strokeWidth={2}
+            onClick={() => setSelectedFilePreview(undefined)}
+          />
+        </div>
       </div>
 
       {/* Preview Thumbnail*/}
-      <div className="my-4 border border-overlay">
+      <div className="my-4 border border-overlay mx-4">
         <div className="flex h-56 w-full items-center 2xl:h-72">
           <PreviewFile item={file} />
         </div>
       </div>
 
-      <div className="w-full space-y-6">
+      <div className="w-full space-y-6 px-4">
         {/* Preview Information */}
         <div className="space-y-1">
           <h5 className="wrap-break-word text-base text-foreground">{file.name}</h5>
@@ -188,84 +185,6 @@ export const PreviewPane = () => {
             <p className="text-sm text-foreground-light">{updatedAt}</p>
           </div>
         </div>
-
-        {/* Actions */}
-        <div className="flex space-x-2 border-b border-overlay pb-4">
-          <Button
-            type="default"
-            icon={<Download />}
-            disabled={file.isCorrupted}
-            onClick={() => downloadFile(file)}
-          >
-            Download
-          </Button>
-          {selectedBucket.public ? (
-            <Button
-              type="outline"
-              icon={<Copy />}
-              onClick={() => onCopyUrl(file.path!)}
-              disabled={file.isCorrupted}
-            >
-              Get URL
-            </Button>
-          ) : (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  type="outline"
-                  icon={<Copy />}
-                  iconRight={<ChevronDown />}
-                  disabled={file.isCorrupted}
-                >
-                  Get URL
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent side="bottom" align="center">
-                <DropdownMenuItem
-                  key="expires-one-week"
-                  onClick={() => onCopyUrl(file.path!, URL_EXPIRY_DURATION.WEEK)}
-                >
-                  Expire in 1 week
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  key="expires-one-month"
-                  onClick={() => onCopyUrl(file.path!, URL_EXPIRY_DURATION.MONTH)}
-                >
-                  Expire in 1 month
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  key="expires-one-year"
-                  onClick={() => onCopyUrl(file.path!, URL_EXPIRY_DURATION.YEAR)}
-                >
-                  Expire in 1 year
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  key="custom-expiry"
-                  onClick={() => setSelectedFileCustomExpiry(file)}
-                >
-                  Custom expiry
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
-        </div>
-        <ButtonTooltip
-          type="outline"
-          disabled={!canUpdateFiles}
-          size="tiny"
-          icon={<Trash2 strokeWidth={2} />}
-          onClick={() => setSelectedItemsToDelete([file])}
-          tooltip={{
-            content: {
-              side: 'bottom',
-              text: !canUpdateFiles
-                ? 'You need additional permissions to delete this file'
-                : undefined,
-            },
-          }}
-        >
-          Delete file
-        </ButtonTooltip>
       </div>
     </div>
   )
